@@ -103,17 +103,16 @@ left join _gdos_crfopdb_public.fop_edycja d on b.fop_id = d.fop_id;
 -------------------------konwencja rozpisana na osobne tabele relacyjne na końcu ------------------------------------------
 
 
-
 drop table if exists migracja.crfop_obszar_chron_krajobrazu_gotowy;
     create table migracja.crfop_obszar_chron_krajobrazu_gotowy as 
     with obszar_chron_krajobrazu_ids as (
-    select distinct fop_id, nextval('fop__tech_id_seq') objectid_from_sequence from 
-    (select distinct fop_id from _gdos_crfopdb_public._obszar_chron_krajobrazu)),
-    obszar_chron_krajobrazu_ids_nowe as (
-    select distinct ochk_id, nextval('fop__tech_id_seq') objectid_from_sequence from 
-    (select distinct ochk_id from _gdos_crfopdb_public.obszar_chron_krajobrazu))
+    select distinct fop_id, ochk_id, nextval('fop__tech_id_seq') objectid_from_sequence from 
+    (select distinct fop_id, ochk_id from _gdos_crfopdb_public._obszar_chron_krajobrazu
+    union
+    select distinct fop_id, ochk_id from _gdos_crfopdb_public.obszar_chron_krajobrazu))    
+    
     SELECT a.fop_id, null fa_id, b.roboczy, b.zatwierdzony, b.zniesiony, b.nazwa, b.data_utworzenia, null rodzaj_operacji, e.objectid_from_sequence nowe_id, b.inspire_id, current_date wersja_od, '9999-12-31 23:59:59.000'::timestamptz  wersja_do,
-    null uzyt_od, null uzyt_do, fe.kod_organu, b.guid, b.opis, opis, b.opis_granicy, b.powierzchnia, case when b.roboczy is false and b.zatwierdzony is false and b.zniesiony is false then 2
+    null uzyt_od, null uzyt_do, fe.kod_organu, b.guid, b.opis opis, b.opis_granicy, b.powierzchnia, case when b.roboczy is false and b.zatwierdzony is false and b.zniesiony is false then 2
 when b.roboczy is false and b.zatwierdzony is false and b.zniesiony is true  then 5
 when b.roboczy is false and b.zatwierdzony is false and b.zniesiony is null  then 2
 when b.roboczy is false and b.zatwierdzony is true and b.zniesiony is  false then 3
@@ -123,7 +122,7 @@ when b.roboczy is true and b.zatwierdzony is false and b.zniesiony is null then 
 when b.roboczy is true and b.zatwierdzony is true and b.zniesiony is null then 2 end as id_slo_fop_status, a.wartosc_przyrodnicza, case when st_geometrytype(b.geom) in ('ST_Point', 'ST_MultiPoint') then b.geom else null end as geom_pkt,
 case when st_geometrytype(b.geom) in ('ST_Polygon', 'ST_MultiPolygon') then b.geom else null end as geom_pow, b.nadzorca
     FROM _gdos_crfopdb_public.obszar_chron_krajobrazu a join _gdos_crfopdb_public.fop b on a.fop_id = b.fop_id
-    join obszar_chron_krajobrazu_ids_nowe e on a.ochk_id = e.ochk_id
+    join obszar_chron_krajobrazu_ids e on a.ochk_id = e.ochk_id
     left join _gdos_crfopdb_public.fop_edycja fe on fe.fop_id = b.fop_id
     union 
     SELECT a.fop_id, a.fa_id, b.roboczy, b.zatwierdzony, b.zniesiony, b.nazwa, b.data_utworzenia, d.rodzaj_operacji, e.objectid_from_sequence nowe_id, b.inspire_id, d.wersja_od, d.wersja_do,
@@ -138,12 +137,12 @@ when b.roboczy is true and b.zatwierdzony is true and b.zniesiony is null then 2
 case when st_geometrytype(b.geom) in ('ST_Polygon', 'ST_MultiPolygon') then b.geom else null end as geom_pow, b.nadzorca
     FROM _gdos_crfopdb_public._obszar_chron_krajobrazu a join _gdos_crfopdb_public._fop b on  a.fa_id = b.fa_id
     join migracja.crfop_tmp_historia_wersji d on b.fa_id = d.fa_id
-    join obszar_chron_krajobrazu_ids e on a.fop_id = e.fop_id; 
-    delete from migracja.crfop_obszar_chron_krajobrazu_gotowy where fop_id in (
-	select fop_id from migracja.crfop_obszar_chron_krajobrazu_gotowy where zatwierdzony is true and rodzaj_operacji = 'usunięcie');
-
+    join obszar_chron_krajobrazu_ids e on a.fop_id = e.fop_id;
+    
 drop table if exists migracja.crfop_obszar_chron_krajobrazu_gestorzy;
 create table migracja.crfop_obszar_chron_krajobrazu_gestorzy as
+select nowe_id, inspire_id, string_agg(nazwa, ', ') wojewodztwa, array_agg(id::varchar(255)) gestorzy
+from(
 with przeciecia as (
 select st_area(st_intersection(ock.geom_pow, woj.geom)) inters_area , ock.nowe_id, ock.inspire_id, woj.nazwa, woj.id 
 from migracja.crfop_obszar_chron_krajobrazu_gotowy ock left join (select * from imap.sys_gestorzy where klasa = 'WOJ') woj
@@ -158,27 +157,28 @@ union
 select ock.nowe_id, ock.inspire_id, woj.nazwa, woj.id 
 from migracja.crfop_obszar_chron_krajobrazu_gotowy ock left join (select * from imap.sys_gestorzy where klasa = 'WOJ') woj 
 on st_intersects(ock.geom_pkt, woj.geom)
-where ock.geom_pkt is not null and ock.wersja_do = '9999-12-31 23:59:59.000';
+where ock.geom_pkt is not null and ock.wersja_do = '9999-12-31 23:59:59.000')
+group by nowe_id, inspire_id;
 
 --mapowanie
 DELETE FROM imap.fop_obszar_chronionego_krajobrazu;
-INSERT INTO imap.fop_obszar_chronionego_krajobrazu (id, lokalnyid, wersja_od, wersja_do, wersjaid, uzyt_od, uzyt_do, nazwa, data_utworzenia, 
-id_slo_fop_status, idguid, opis, opisprzebiegugranicy, powierzchnia, wartoscprzyrodnicza, geometria_pkt, geometria_pow, zatw_wersja_od, zatw_wersja_do, gestor)
+INSERT INTO imap.fop_obszar_chronionego_krajobrazu (id, lokalnyid, wersja_od, wersja_do, wersjaid, uzyt_od, uzyt_do, nazwa, data_utworzenia, id_slo_fop_status, 
+idguid, opis, opisprzebiegugranicy, powierzchnia, wartoscprzyrodnicza, geometria_pkt, geometria_pow, zatw_wersja_od, zatw_wersja_do, gestor, nadzorca) --gestorzy
 SELECT ock.nowe_id, ock.inspire_id, wersja_od, wersja_do, wersja_od, uzyt_od, uzyt_do, ock.nazwa, data_utworzenia, id_slo_fop_status, guid, 
-opis, opis_granicy, powierzchnia, wartosc_przyrodnicza, geom_pkt, geom_pow, wersja_od, wersja_do, g.id
+opis, opis_granicy, powierzchnia, wartosc_przyrodnicza, geom_pkt, geom_pow, wersja_od, wersja_do, kod_organu, nadzorca --,g.id
 FROM migracja.crfop_obszar_chron_krajobrazu_gotowy ock
 left join migracja.crfop_obszar_chron_krajobrazu_gestorzy g on ock.inspire_id = g.inspire_id;
 
 drop table if exists migracja.crfop_park_krajobrazowy_gotowy;
     create table migracja.crfop_park_krajobrazowy_gotowy as 
     with park_krajobrazowy_ids as (
-    select distinct fop_id, nextval('fop__tech_id_seq') objectid_from_sequence from 
-    (select distinct fop_id from _gdos_crfopdb_public._park_krajobrazowy )),
-    park_krajobrazowy_ids_nowe as(
-    select distinct pk_id, nextval('fop__tech_id_seq') objectid_from_sequence from
-    (select distinct pk_id from _gdos_crfopdb_public.park_krajobrazowy))
+    select distinct fop_id, pk_id, nextval('fop__tech_id_seq') objectid_from_sequence from 
+    (select distinct fop_id, pk_id from _gdos_crfopdb_public._park_krajobrazowy
+    union
+    select distinct fop_id, pk_id from _gdos_crfopdb_public.park_krajobrazowy))
+
     SELECT a.fop_id, null fa_id, b.roboczy, b.zatwierdzony, b.zniesiony, b.nazwa, b.data_utworzenia, null rodzaj_operacji, e.objectid_from_sequence nowe_id, b.inspire_id, current_date wersja_od, '9999-12-31 23:59:59.000'::timestamptz  wersja_do,
-    null uzyt_od, null uzyt_do, fe.kod_organu, b.guid, concat(b.opis, ', nadzorca: ', b.nadzorca) opis, b.opis_granicy, b.powierzchnia, case when b.roboczy is false and b.zatwierdzony is false and b.zniesiony is false then 2
+    null uzyt_od, null uzyt_do, fe.kod_organu, b.guid, b.opis opis, b.opis_granicy, b.powierzchnia, case when b.roboczy is false and b.zatwierdzony is false and b.zniesiony is false then 2
 when b.roboczy is false and b.zatwierdzony is false and b.zniesiony is true  then 5
 when b.roboczy is false and b.zatwierdzony is false and b.zniesiony is null  then 2
 when b.roboczy is false and b.zatwierdzony is true and b.zniesiony is  false then 3
@@ -187,14 +187,14 @@ when b.roboczy is true and b.zatwierdzony is false and b.zniesiony is false then
 when b.roboczy is true and b.zatwierdzony is false and b.zniesiony is null then 2
 when b.roboczy is true and b.zatwierdzony is true and b.zniesiony is null then 2 end as id_slo_fop_status, a.pk_id, 
 case when a.plan_ochrony is true then 'T' when a.plan_ochrony is false then 'N' end as plan_ochrony, 
-a.data_planu, a.cel_ochrony, a.otulina,
+a.data_planu, a.cel_ochrony, a.otulina, b.nadzorca,
 case when st_geometrytype(b.geom) in ('ST_Point', 'ST_MultiPoint', 'ST_LineString', 'ST_MultiLineString') then st_buffer(b.geom, 1) when st_geometrytype(b.geom) in ('ST_Polygon', 'ST_MultiPolygon') then b.geom else null end as geom_pow
     FROM _gdos_crfopdb_public.park_krajobrazowy a join _gdos_crfopdb_public.fop b on a.fop_id = b.fop_id
-    join park_krajobrazowy_ids_nowe e on a.pk_id = e.pk_id
+    join park_krajobrazowy_ids e on a.pk_id = e.pk_id
     left join _gdos_crfopdb_public.fop_edycja fe on fe.fop_id = b.fop_id
     union 
     SELECT a.fop_id, a.fa_id, b.roboczy, b.zatwierdzony, b.zniesiony, b.nazwa, b.data_utworzenia, d.rodzaj_operacji, e.objectid_from_sequence nowe_id, b.inspire_id, d.wersja_od, d.wersja_do,
-    d.uzyt_od, d.uzyt_do, d.kod_organu, b.guid, concat(b.opis, ', nadzorca: ', b.nadzorca) opis, b.opis_granicy, b.powierzchnia, case when b.roboczy is false and b.zatwierdzony is false and b.zniesiony is false then 2
+    d.uzyt_od, d.uzyt_do, d.kod_organu, b.guid, b.opis opis, b.opis_granicy, b.powierzchnia, case when b.roboczy is false and b.zatwierdzony is false and b.zniesiony is false then 2
 when b.roboczy is false and b.zatwierdzony is false and b.zniesiony is true  then 5
 when b.roboczy is false and b.zatwierdzony is false and b.zniesiony is null  then 2
 when b.roboczy is false and b.zatwierdzony is true and b.zniesiony is  false then 3
@@ -203,7 +203,7 @@ when b.roboczy is true and b.zatwierdzony is false and b.zniesiony is false then
 when b.roboczy is true and b.zatwierdzony is false and b.zniesiony is null then 2
 when b.roboczy is true and b.zatwierdzony is true and b.zniesiony is null then 2 end as id_slo_fop_status, a.pk_id, 
 case when a.plan_ochrony is true then 'T' when a.plan_ochrony is false then 'N' end as plan_ochrony, 
-a.data_planu, a.cel_ochrony, a.otulina,
+a.data_planu, a.cel_ochrony, a.otulina, b.nadzorca,
 case when st_geometrytype(b.geom) in ('ST_Point', 'ST_MultiPoint', 'ST_LineString', 'ST_MultiLineString') then st_buffer(b.geom, 1) when st_geometrytype(b.geom) in ('ST_Polygon', 'ST_MultiPolygon') then b.geom else null end as geom_pow
     FROM _gdos_crfopdb_public._park_krajobrazowy a join _gdos_crfopdb_public._fop b on  a.fa_id = b.fa_id
     join migracja.crfop_tmp_historia_wersji d on b.fa_id = d.fa_id
@@ -213,33 +213,34 @@ case when st_geometrytype(b.geom) in ('ST_Point', 'ST_MultiPoint', 'ST_LineStrin
 	
 drop table if exists migracja.crfop_park_krajobrazowy_gestorzy;
 create table migracja.crfop_park_krajobrazowy_gestorzy as
+select pk_id, inspire_id, string_agg(nazwa, ', ') wojewodztwa, array_agg(id_gestora::varchar(255)) gestorzy
+from(
 with pk_przeciecia as (
 select st_area(st_intersection(pk.geom_pow, woj.geom)) inters_area , pk.nowe_id id_pk, woj.nazwa, woj.id id_gestora, pk.geom_pow, 
 st_intersection(pk.geom_pow, woj.geom), pk.inspire_id
 from migracja.crfop_park_krajobrazowy_gotowy pk left join (select * from imap.sys_gestorzy where klasa = 'WOJ') woj
 on st_intersects(pk.geom_pow, woj.geom)
 where pk.geom_pow is not null and st_isvalid(pk.geom_pow) and pk.wersja_do = '9999-12-31 23:59:59.000')
-select pk.nowe_id pk_id, pk_przeciecia.inters_area, pk_przeciecia.nazwa, pk_przeciecia.id_gestora
-from migracja.crfop_park_krajobrazowy_gotowy pk join (select * from pk_przeciecia where inters_area > 500000) pk_przeciecia on pk.inspire_id = pk_przeciecia.inspire_id;
+select distinct pk.nowe_id pk_id, pk_przeciecia.inters_area, pk_przeciecia.nazwa, pk_przeciecia.id_gestora, pk.inspire_id
+from migracja.crfop_park_krajobrazowy_gotowy pk join (select * from pk_przeciecia where inters_area > 500000) pk_przeciecia on pk.inspire_id = pk_przeciecia.inspire_id)
+group by pk_id, inspire_id;
 
 DELETE FROM imap.fop_park_krajobrazowy;
-INSERT INTO imap.fop_park_krajobrazowy (id, lokalnyid, wersja_od, wersja_do, wersjaid, uzyt_od, uzyt_do, gestor, nazwa, data_utworzenia,
-id_slo_fop_status, idguid, opis, opisprzebiegugranicy, powierzchnia, celeochrony, czy_planochrony, data_planu, geometria_pow, zatw_wersja_od, zatw_wersja_do)
+INSERT INTO imap.fop_park_krajobrazowy (id, lokalnyid, wersja_od, wersja_do, wersjaid, uzyt_od, uzyt_do, gestor, nazwa, data_utworzenia, id_slo_fop_status,
+idguid, opis, opisprzebiegugranicy, powierzchnia, celeochrony, czy_planochrony, data_planu, geometria_pow, zatw_wersja_od, zatw_wersja_do, nadzorca)
 SELECT nowe_id, inspire_id, wersja_od, wersja_do, wersja_od, uzyt_od, uzyt_do, kod_organu, nazwa, data_utworzenia, id_slo_fop_status, guid, 
-opis, opis_granicy, powierzchnia, cel_ochrony, plan_ochrony, data_planu, geom_pow, wersja_od, wersja_do
+opis, opis_granicy, powierzchnia, cel_ochrony, plan_ochrony, data_planu, geom_pow, wersja_od, wersja_do, nadzorca
 FROM migracja.crfop_park_krajobrazowy_gotowy;
-
-
 
 
 drop table if exists migracja.crfop_park_krajobrazowy_otulina_gotowy;
     create table migracja.crfop_park_krajobrazowy_otulina_gotowy as 
     with park_krajobrazowy_ids as (
-    select distinct fop_id, nextval('fop__tech_id_seq') objectid_from_sequence from 
-    (select distinct fop_id from _gdos_crfopdb_public._park_krajobrazowy )),
-    park_krajobrazowy_ids_nowe as (
-    select distinct pk_id, nextval('fop__tech_id_seq') objectid_from_sequence from 
-    (select distinct pk_id from _gdos_crfopdb_public.park_krajobrazowy))
+    select distinct fop_id, pk_id, nextval('fop__tech_id_seq') objectid_from_sequence from 
+    (select distinct fop_id, pk_id from _gdos_crfopdb_public._park_krajobrazowy
+    union
+    select distinct fop_id, pk_id from _gdos_crfopdb_public.park_krajobrazowy))
+
     SELECT a.fop_id, f.nowe_id id_fop_park_krajobrazowy, null fa_id, b.roboczy, b.zatwierdzony, b.zniesiony, b.nazwa, b.data_utworzenia, null rodzaj_operacji, e.objectid_from_sequence nowe_id, b.inspire_id, current_date wersja_od, '9999-12-31 23:59:59.000'::timestamptz  wersja_do,
     null uzyt_od, null uzyt_do, fe.kod_organu, b.guid, b.opis, b.opis_granicy, b.powierzchnia, case when b.roboczy is false and b.zatwierdzony is false and b.zniesiony is false then 2
 when b.roboczy is false and b.zatwierdzony is false and b.zniesiony is true  then 5
@@ -248,7 +249,7 @@ when b.roboczy is false and b.zatwierdzony is true and b.zniesiony is  false the
 when b.roboczy is false and b.zatwierdzony is true and b.zniesiony is  null  then 3
 when b.roboczy is true and b.zatwierdzony is false and b.zniesiony is false then 2
 when b.roboczy is true and b.zatwierdzony is false and b.zniesiony is null then 2
-when b.roboczy is true and b.zatwierdzony is true and b.zniesiony is null then 2 end as id_slo_fop_status, a.pk_id, a.opis_granicy_ot, a.powierzchnia_ot, a.geom_ot
+when b.roboczy is true and b.zatwierdzony is true and b.zniesiony is null then 2 end as id_slo_fop_status, a.pk_id, a.opis_granicy_ot, a.powierzchnia_ot, a.geom_ot, b.nadzorca
     FROM _gdos_crfopdb_public.park_krajobrazowy a join (select distinct pk_id, nowe_id from migracja.crfop_park_krajobrazowy_gotowy where otulina is true and wersja_do = '9999-12-31 23:59:59.000') f on a.pk_id = f.pk_id
     join _gdos_crfopdb_public.fop b on a.fop_id = b.fop_id
     join park_krajobrazowy_ids e on a.fop_id = e.fop_id
@@ -263,22 +264,22 @@ when b.roboczy is false and b.zatwierdzony is true and b.zniesiony is  false the
 when b.roboczy is false and b.zatwierdzony is true and b.zniesiony is  null  then 3
 when b.roboczy is true and b.zatwierdzony is false and b.zniesiony is false then 2
 when b.roboczy is true and b.zatwierdzony is false and b.zniesiony is null then 2
-when b.roboczy is true and b.zatwierdzony is true and b.zniesiony is null then 2 end as id_slo_fop_status, a.pk_id, a.opis_granicy_ot, a.powierzchnia_ot, a.geom_ot
+when b.roboczy is true and b.zatwierdzony is true and b.zniesiony is null then 2 end as id_slo_fop_status, a.pk_id, a.opis_granicy_ot, a.powierzchnia_ot, a.geom_ot, b.nadzorca
     FROM _gdos_crfopdb_public._park_krajobrazowy a join (select distinct pk_id, nowe_id from migracja.crfop_park_krajobrazowy_gotowy where otulina is true and wersja_do <> '9999-12-31 23:59:59.000') f on a.pk_id = f.pk_id
     join _gdos_crfopdb_public._fop b on  a.fa_id = b.fa_id
     join migracja.crfop_tmp_historia_wersji d on b.fa_id = d.fa_id
-    join park_krajobrazowy_ids_nowe e on a.pk_id = e.pk_id
+    join park_krajobrazowy_ids e on a.pk_id = e.pk_id
     where a.otulina is true;
     delete from migracja.crfop_park_krajobrazowy_otulina_gotowy where fop_id in (
 	select fop_id from migracja.crfop_park_krajobrazowy_otulina_gotowy where zatwierdzony is true and rodzaj_operacji = 'usunięcie');
 	
 DELETE FROM imap.fop_park_krajobrazowy_otulina;
 INSERT INTO imap.fop_park_krajobrazowy_otulina (id, lokalnyid, wersja_od, wersja_do, wersjaid, uzyt_od, uzyt_do, gestor, nazwa, data_utworzenia,
-id_slo_fop_status, idguid, opis, opisprzebiegugranicy, powierzchnia, id_fop_park_krajobrazowy, geometria_pow, zatw_wersja_od, zatw_wersja_do)
+id_slo_fop_status, idguid, opis, opisprzebiegugranicy, powierzchnia, id_fop_park_krajobrazowy, geometria_pow, zatw_wersja_od, zatw_wersja_do, nadzorca)
 SELECT nowe_id, inspire_id, wersja_od, wersja_do, wersja_od, uzyt_od, uzyt_do, kod_organu, nazwa, data_utworzenia, id_slo_fop_status, guid, 
 opis, opis_granicy_ot, powierzchnia_ot, id_fop_park_krajobrazowy, 
 case when st_geometrytype(geom_ot) in ('ST_Point', 'ST_MultiPoint', 'ST_LineString', 'ST_MultiLineString') then st_buffer(geom_ot, 1) when st_geometrytype(geom_ot) in ('ST_Polygon', 'ST_MultiPolygon') then geom_ot else null end
-, wersja_od, wersja_do
+, wersja_od, wersja_do, nadzorca
 FROM migracja.crfop_park_krajobrazowy_otulina_gotowy;
 
 /*
@@ -325,12 +326,13 @@ when b.roboczy is true and b.zatwierdzony is true and b.zniesiony is null then 2
 drop table if exists migracja.crfop_park_narodowy_gotowy;
     create table migracja.crfop_park_narodowy_gotowy as 
     with park_narodowy_ids as (
-    select distinct fop_id, nextval('fop__tech_id_seq') objectid_from_sequence from 
-    (select distinct fop_id from _gdos_crfopdb_public._park_narodowy 
+    select distinct fop_id, pn_id, nextval('fop__tech_id_seq') objectid_from_sequence from 
+    (select distinct fop_id, pn_id from _gdos_crfopdb_public._park_narodowy
     union
-    select distinct fop_id from _gdos_crfopdb_public.park_narodowy))
+    select distinct fop_id, pn_id from _gdos_crfopdb_public.park_narodowy))
+
     SELECT null fa_id, a.fop_id, b.roboczy, b.zatwierdzony, b.zniesiony, b.nazwa, b.data_utworzenia, null rodzaj_operacji, e.objectid_from_sequence nowe_id, b.inspire_id, current_date wersja_od, '9999-12-31 23:59:59.000'::timestamptz  wersja_do,
-    null uzyt_od, null uzyt_do, fe.kod_organu, b.guid, concat(b.opis, ', nadzorca: ', b.nadzorca) opis, b.opis_granicy, b.geom, b.powierzchnia, case when b.roboczy is false and b.zatwierdzony is false and b.zniesiony is false then 2
+    null uzyt_od, null uzyt_do, fe.kod_organu, b.guid, b.opis opis, b.opis_granicy, b.geom, b.powierzchnia, case when b.roboczy is false and b.zatwierdzony is false and b.zniesiony is false then 2
 when b.roboczy is false and b.zatwierdzony is false and b.zniesiony is true  then 5
 when b.roboczy is false and b.zatwierdzony is false and b.zniesiony is null  then 2
 when b.roboczy is false and b.zatwierdzony is true and b.zniesiony is  false then 3
@@ -340,13 +342,13 @@ when b.roboczy is true and b.zatwierdzony is false and b.zniesiony is null then 
 when b.roboczy is true and b.zatwierdzony is true and b.zniesiony is null then 2 end as id_slo_fop_status, a.pn_id, 
 case when a.plan_ochrony is true then 'T' when a.plan_ochrony is false then 'N' end as plan_ochrony, a.data_planu, 
 case when a.zadania_ochronne is true then 'T' when a.zadania_ochronne is false then 'N' end as zadania_ochronne, 
-a.data_zadan, a.opis_granicy_ot, a.powierzchnia_ot, a.geom_ot, a.otulina
+a.data_zadan, a.opis_granicy_ot, a.powierzchnia_ot, a.geom_ot, a.otulina, b.nadzorca
     FROM _gdos_crfopdb_public.park_narodowy a join _gdos_crfopdb_public.fop b on a.fop_id = b.fop_id
     join park_narodowy_ids e on a.fop_id = e.fop_id
     left join _gdos_crfopdb_public.fop_edycja fe on fe.fop_id = b.fop_id
     union 
     SELECT a.fa_id, a.fop_id, b.roboczy, b.zatwierdzony, b.zniesiony, b.nazwa, b.data_utworzenia, d.rodzaj_operacji, e.objectid_from_sequence nowe_id, b.inspire_id, d.wersja_od, d.wersja_do,
-    d.uzyt_od, d.uzyt_do, d.kod_organu, b.guid, concat(b.opis, ', nadzorca: ', b.nadzorca) opis, b.opis_granicy, b.geom, b.powierzchnia, case when b.roboczy is false and b.zatwierdzony is false and b.zniesiony is false then 2
+    d.uzyt_od, d.uzyt_do, d.kod_organu, b.guid, b.opis opis, b.opis_granicy, b.geom, b.powierzchnia, case when b.roboczy is false and b.zatwierdzony is false and b.zniesiony is false then 2
 when b.roboczy is false and b.zatwierdzony is false and b.zniesiony is true  then 5
 when b.roboczy is false and b.zatwierdzony is false and b.zniesiony is null  then 2
 when b.roboczy is false and b.zatwierdzony is true and b.zniesiony is  false then 3
@@ -356,7 +358,7 @@ when b.roboczy is true and b.zatwierdzony is false and b.zniesiony is null then 
 when b.roboczy is true and b.zatwierdzony is true and b.zniesiony is null then 2 end as id_slo_fop_status, a.pn_id, 
 case when a.plan_ochrony is true then 'T' when a.plan_ochrony is false then 'N' end as plan_ochrony, a.data_planu, 
 case when a.zadania_ochronne is true then 'T' when a.zadania_ochronne is false then 'N' end as zadania_ochronne, 
-a.data_zadan, a.opis_granicy_ot, a.powierzchnia_ot, a.geom_ot, a.otulina
+a.data_zadan, a.opis_granicy_ot, a.powierzchnia_ot, a.geom_ot, a.otulina, b.nadzorca
     FROM _gdos_crfopdb_public._park_narodowy a join _gdos_crfopdb_public._fop b on  a.fa_id = b.fa_id
     join migracja.crfop_tmp_historia_wersji d on b.fa_id = d.fa_id
     join park_narodowy_ids e on a.fop_id = e.fop_id; 
@@ -370,11 +372,12 @@ where geom is not null and wersja_do = '9999-12-31 23:59:59.000 +0100' and inspi
 
 DELETE FROM imap.fop_park_narodowy;
 INSERT INTO imap.fop_park_narodowy (id, lokalnyid, wersja_od, wersja_do, wersjaid, uzyt_od, uzyt_do, nazwa, data_utworzenia,
-id_slo_fop_status, idguid, opis, opisprzebiegugranicy, powierzchnia, czy_planochrony, data_planu, czy_zadaniaochronne, data_zadanochronnych, geometria_pow, zatw_wersja_od, zatw_wersja_do, gestor)
+id_slo_fop_status, idguid, opis, opisprzebiegugranicy, powierzchnia, czy_planochrony, data_planu, czy_zadaniaochronne, data_zadanochronnych, geometria_pow, zatw_wersja_od, zatw_wersja_do, gestor
+, nadzorca)
 SELECT nowe_id, inspire_id, wersja_od, wersja_do, wersja_od, uzyt_od, uzyt_do, pn.nazwa, data_utworzenia, id_slo_fop_status, guid, 
 opis, opis_granicy, powierzchnia, null plan_ochrony, data_planu, null zadania_ochronne, data_zadan,
 case when st_geometrytype(pn.geom) in ('ST_Point', 'ST_MultiPoint', 'ST_LineString', 'ST_MultiLineString') then st_buffer(pn.geom, 1) when st_geometrytype(pn.geom) in ('ST_Polygon', 'ST_MultiPolygon') then pn.geom else null end
-, wersja_od, wersja_do, ge.id as kod_organu
+, wersja_od, wersja_do, ge.id as kod_organu, nadzorca
 FROM migracja.crfop_park_narodowy_gotowy pn
 left join sys_gestorzy ge on pn.inspire_id = ge.kod;
 
@@ -382,10 +385,10 @@ drop table if exists migracja.crfop_park_narodowy_obszar_ochrony_gotowy;
     create table migracja.crfop_park_narodowy_obszar_ochrony_gotowy as 
     with park_narodowy_ids as (
     select distinct oo_id, nextval('fop__tech_id_seq') objectid_from_sequence from 
-    (select distinct oo_id from _gdos_crfopdb_public._obszar_ochrony )),
-    park_narodowy_ids_nowe as (
-    select distinct oo_id, nextval('fop__tech_id_seq') objectid_from_sequence from 
-    (select distinct oo_id from _gdos_crfopdb_public.obszar_ochrony))
+    (select distinct oo_id from _gdos_crfopdb_public._obszar_ochrony
+    union
+    select distinct oo_id from _gdos_crfopdb_public.obszar_ochrony))
+
     SELECT a.fop_id, null fa_id, a.nowe_id id_fop_park_narodowy, b.roboczy, b.zatwierdzony, b.zniesiony, b.nazwa, b.data_utworzenia, null rodzaj_operacji, e.objectid_from_sequence nowe_id, b.inspire_id, current_date wersja_od, '9999-12-31 23:59:59.000'::timestamptz  wersja_do,
     null uzyt_od, null uzyt_do, b.guid, b.opis, b.opis_granicy, b.powierzchnia, fe.kod_organu, case when b.roboczy is false and b.zatwierdzony is false and b.zniesiony is false then 2
 when b.roboczy is false and b.zatwierdzony is false and b.zniesiony is true  then 5
@@ -395,7 +398,7 @@ when b.roboczy is false and b.zatwierdzony is true and b.zniesiony is  null  the
 when b.roboczy is true and b.zatwierdzony is false and b.zniesiony is false then 2
 when b.roboczy is true and b.zatwierdzony is false and b.zniesiony is null then 2
 when b.roboczy is true and b.zatwierdzony is true and b.zniesiony is null then 2 end as id_slo_fop_status, a.pn_id, case when c.rodzaj_ochrony_id = 'OC' then 1 when c.rodzaj_ochrony_id = 'OK' then 2 when c.rodzaj_ochrony_id = 'OS' then 3 else null end as rodzaj_ochrony,
-case when c.caly_obszar is true then 'T' when c.caly_obszar is false then 'N' end as caly_obszar, c.powierzchnia_och, c.geom
+case when c.caly_obszar is true then 'T' when c.caly_obszar is false then 'N' end as caly_obszar, c.powierzchnia_och, c.geom, b.nadzorca
     FROM (select distinct pn_id, fop_id, nowe_id from migracja.crfop_park_narodowy_gotowy ) a join _gdos_crfopdb_public.fop b on a.fop_id = b.fop_id
     join _gdos_crfopdb_public.obszar_ochrony c on a.fop_id = c.fop_id
     join park_narodowy_ids e on c.oo_id = e.oo_id
@@ -410,40 +413,41 @@ when b.roboczy is false and b.zatwierdzony is true and b.zniesiony is  null  the
 when b.roboczy is true and b.zatwierdzony is false and b.zniesiony is false then 2
 when b.roboczy is true and b.zatwierdzony is false and b.zniesiony is null then 2
 when b.roboczy is true and b.zatwierdzony is true and b.zniesiony is null then 2 end as id_slo_fop_status, a.pn_id, case when c.rodzaj_ochrony_id = 'OC' then 1 when c.rodzaj_ochrony_id = 'OK' then 2 when c.rodzaj_ochrony_id = 'OS' then 3 else null end as rodzaj_ochrony,
-case when c.caly_obszar is true then 'T' when c.caly_obszar is false then 'N' end as caly_obszar, c.powierzchnia_och, c.geom
+case when c.caly_obszar is true then 'T' when c.caly_obszar is false then 'N' end as caly_obszar, c.powierzchnia_och, c.geom, b.nadzorca
     FROM (select distinct pn_id, fop_id, nowe_id, fa_id from migracja.crfop_park_narodowy_gotowy ) a join _gdos_crfopdb_public._fop b on  a.fa_id = b.fa_id
     join migracja.crfop_tmp_historia_wersji d on b.fa_id = d.fa_id
     join _gdos_crfopdb_public._obszar_ochrony c on a.fa_id = c.fa_id
-    join park_narodowy_ids_nowe e on c.oo_id = e.oo_id;
+    join park_narodowy_ids e on c.oo_id = e.oo_id;
     delete from migracja.crfop_park_narodowy_obszar_ochrony_gotowy where fop_id in (
 	select fop_id from migracja.crfop_park_narodowy_obszar_ochrony_gotowy where zatwierdzony is true and rodzaj_operacji = 'usunięcie');
 	
 DELETE FROM imap.fop_park_narodowy_obszar_ochrony;
 INSERT INTO imap.fop_park_narodowy_obszar_ochrony (id, lokalnyid, wersja_od, wersja_do, wersjaid, uzyt_od, uzyt_do, nazwa, data_utworzenia,
-id_slo_fop_status, idguid, opis, opisprzebiegugranicy, powierzchnia, id_fop_park_narodowy, id_slo_fop_park_rodzaj_ochrony, czy_calyobszar, geometria_pow, zatw_wersja_od, zatw_wersja_do, gestor)
+id_slo_fop_status, idguid, opis, opisprzebiegugranicy, powierzchnia, id_fop_park_narodowy, id_slo_fop_park_rodzaj_ochrony, czy_calyobszar, geometria_pow, zatw_wersja_od, zatw_wersja_do, gestor,
+nadzorca)
 SELECT nowe_id, inspire_id, wersja_od, wersja_do, wersja_od, uzyt_od, uzyt_do, nazwa, data_utworzenia, id_slo_fop_status, guid,
 opis, opis_granicy, powierzchnia_och, id_fop_park_narodowy, rodzaj_ochrony, caly_obszar,
 case when st_geometrytype(geom) in ('ST_Point', 'ST_MultiPoint', 'ST_LineString', 'ST_MultiLineString') then st_buffer(geom, 1) when st_geometrytype(geom) in ('ST_Polygon', 'ST_MultiPolygon') then geom else null end
-, wersja_od, wersja_do, kod_organu
+, wersja_od, wersja_do, kod_organu, nadzorca
 FROM migracja.crfop_park_narodowy_obszar_ochrony_gotowy;
 
 drop table if exists migracja.crfop_park_narodowy_otulina_gotowy;
     create table migracja.crfop_park_narodowy_otulina_gotowy as 
     with park_narodowy_ids as (
-    select distinct fop_id, nextval('fop__tech_id_seq') objectid_from_sequence from 
-    (select distinct fop_id from _gdos_crfopdb_public._park_narodowy)),
-    park_narodowy_ids_nowe as(
-    select distinct pn_id, nextval('fop__tech_id_seq') objectid_from_sequence from 
-    (select distinct pn_id from _gdos_crfopdb_public.park_narodowy))
+    select distinct fop_id, pn_id, nextval('fop__tech_id_seq') objectid_from_sequence from 
+    (select distinct fop_id, pn_id from _gdos_crfopdb_public._park_narodowy
+    union
+    select distinct fop_id, pn_id from _gdos_crfopdb_public.park_narodowy))
+
     SELECT a.fop_id, null fa_id, f.nowe_id id_fop_park_narodowy, b.roboczy, b.zatwierdzony, b.zniesiony, b.nazwa, b.data_utworzenia, null rodzaj_operacji, e.objectid_from_sequence nowe_id, b.inspire_id, current_date wersja_od, '9999-12-31 23:59:59.000'::timestamptz  wersja_do,
-    null uzyt_od, null uzyt_do, b.guid, concat(b.opis, ', nadzorca: ', b.nadzorca) opis, b.opis_granicy, b.powierzchnia, fe.kod_organu, case when b.roboczy is false and b.zatwierdzony is false and b.zniesiony is false then 2
+    null uzyt_od, null uzyt_do, b.guid, b.opis opis, b.opis_granicy, b.powierzchnia, fe.kod_organu, case when b.roboczy is false and b.zatwierdzony is false and b.zniesiony is false then 2
 when b.roboczy is false and b.zatwierdzony is false and b.zniesiony is true  then 5
 when b.roboczy is false and b.zatwierdzony is false and b.zniesiony is null  then 2
 when b.roboczy is false and b.zatwierdzony is true and b.zniesiony is  false then 3
 when b.roboczy is false and b.zatwierdzony is true and b.zniesiony is  null  then 3
 when b.roboczy is true and b.zatwierdzony is false and b.zniesiony is false then 2
 when b.roboczy is true and b.zatwierdzony is false and b.zniesiony is null then 2
-when b.roboczy is true and b.zatwierdzony is true and b.zniesiony is null then 2 end as id_slo_fop_status, a.pn_id, a.opis_granicy_ot, a.powierzchnia_ot, a.geom_ot
+when b.roboczy is true and b.zatwierdzony is true and b.zniesiony is null then 2 end as id_slo_fop_status, a.pn_id, a.opis_granicy_ot, a.powierzchnia_ot, a.geom_ot, b.nadzorca
     FROM _gdos_crfopdb_public.park_narodowy a join (select distinct pn_id, nowe_id from migracja.crfop_park_narodowy_gotowy where otulina is true and wersja_do = '9999-12-31 23:59:59.000') f on a.pn_id = f.pn_id
     join _gdos_crfopdb_public.fop b on a.fop_id = b.fop_id
     join park_narodowy_ids e on a.fop_id = e.fop_id
@@ -451,29 +455,29 @@ when b.roboczy is true and b.zatwierdzony is true and b.zniesiony is null then 2
     where a.otulina is true
     union 
     SELECT a.fop_id, a.fa_id, f.nowe_id id_fop_park_narodowy, b.roboczy, b.zatwierdzony, b.zniesiony, b.nazwa, b.data_utworzenia, d.rodzaj_operacji, e.objectid_from_sequence nowe_id, b.inspire_id, d.wersja_od, d.wersja_do,
-    d.uzyt_od, d.uzyt_do, b.guid, concat(b.opis, ', nadzorca: ', b.nadzorca) opis, b.opis_granicy, b.powierzchnia, d.kod_organu, case when b.roboczy is false and b.zatwierdzony is false and b.zniesiony is false then 2
+    d.uzyt_od, d.uzyt_do, b.guid, b.opis opis, b.opis_granicy, b.powierzchnia, d.kod_organu, case when b.roboczy is false and b.zatwierdzony is false and b.zniesiony is false then 2
 when b.roboczy is false and b.zatwierdzony is false and b.zniesiony is true  then 5
 when b.roboczy is false and b.zatwierdzony is false and b.zniesiony is null  then 2
 when b.roboczy is false and b.zatwierdzony is true and b.zniesiony is  false then 3
 when b.roboczy is false and b.zatwierdzony is true and b.zniesiony is  null  then 3
 when b.roboczy is true and b.zatwierdzony is false and b.zniesiony is false then 2
 when b.roboczy is true and b.zatwierdzony is false and b.zniesiony is null then 2
-when b.roboczy is true and b.zatwierdzony is true and b.zniesiony is null then 2 end as id_slo_fop_status, a.pn_id, a.opis_granicy_ot, a.powierzchnia_ot, a.geom_ot
+when b.roboczy is true and b.zatwierdzony is true and b.zniesiony is null then 2 end as id_slo_fop_status, a.pn_id, a.opis_granicy_ot, a.powierzchnia_ot, a.geom_ot, b.nadzorca
     FROM _gdos_crfopdb_public._park_narodowy a join (select distinct pn_id, nowe_id from migracja.crfop_park_narodowy_gotowy where otulina is true and wersja_do <> '9999-12-31 23:59:59.000') f on a.pn_id = f.pn_id
     join _gdos_crfopdb_public._fop b on  a.fa_id = b.fa_id
     join migracja.crfop_tmp_historia_wersji d on b.fa_id = d.fa_id
-    join park_narodowy_ids_nowe e on a.pn_id = e.pn_id
+    join park_narodowy_ids e on a.pn_id = e.pn_id
     where a.otulina is true; 
     delete from migracja.crfop_park_narodowy_otulina_gotowy where fop_id in (
 	select fop_id from migracja.crfop_park_narodowy_otulina_gotowy where zatwierdzony is true and rodzaj_operacji = 'usunięcie');
 	
 DELETE FROM imap.fop_park_narodowy_otulina;
 INSERT INTO imap.fop_park_narodowy_otulina (id, lokalnyid, wersja_od, wersja_do, wersjaid, uzyt_od, uzyt_do, nazwa, data_utworzenia,
-id_slo_fop_status, idguid, opis, opisprzebiegugranicy, powierzchnia, id_fop_park_narodowy, geometria_pow, zatw_wersja_od, zatw_wersja_do, gestor)
+id_slo_fop_status, idguid, opis, opisprzebiegugranicy, powierzchnia, id_fop_park_narodowy, geometria_pow, zatw_wersja_od, zatw_wersja_do, gestor, nadzorca)
 SELECT nowe_id, inspire_id, wersja_od, wersja_do, wersja_od, uzyt_od, uzyt_do, nazwa, data_utworzenia, id_slo_fop_status, guid, 
 opis, opis_granicy_ot, powierzchnia_ot, id_fop_park_narodowy, 
 case when st_geometrytype(geom_ot) in ('ST_Point', 'ST_MultiPoint', 'ST_LineString', 'ST_MultiLineString') then st_buffer(geom_ot, 1) when st_geometrytype(geom_ot) in ('ST_Polygon', 'ST_MultiPolygon') then geom_ot else null end
-, wersja_od, wersja_do, kod_organu
+, wersja_od, wersja_do, kod_organu, nadzorca
 FROM migracja.crfop_park_narodowy_otulina_gotowy;
 
 /*
@@ -556,13 +560,13 @@ when b.roboczy is true and b.zatwierdzony is true and b.zniesiony is null then 2
 drop table if exists migracja.crfop_pomnik_przyrody_gotowy;
     create table migracja.crfop_pomnik_przyrody_gotowy as 
     with pomnik_przyrody_ids as (
-    select distinct fop_id, nextval('fop__tech_id_seq') objectid_from_sequence from 
-    (select distinct fop_id from _gdos_crfopdb_public._pomnik_przyrody)),
-    pomnik_przyrody_ids_nowe as (
-    select distinct pp_id, nextval('fop__tech_id_seq') objectid_from_sequence from 
-    (select distinct pp_id from _gdos_crfopdb_public.pomnik_przyrody))
+    select distinct fop_id, pp_id, nextval('fop__tech_id_seq') objectid_from_sequence from 
+    (select distinct fop_id, pp_id from _gdos_crfopdb_public._pomnik_przyrody
+    union
+    select distinct fop_id, pp_id from _gdos_crfopdb_public.pomnik_przyrody))
+
     SELECT a.fop_id, null fa_id, b.roboczy, b.zatwierdzony, b.zniesiony, b.nazwa, b.data_utworzenia, null rodzaj_operacji, e.objectid_from_sequence nowe_id, b.inspire_id, current_date wersja_od, '9999-12-31 23:59:59.000'::timestamptz  wersja_do,
-    null uzyt_od, null uzyt_do, b.guid, concat(b.opis, ', nadzorca: ', b.nadzorca) opis, b.opis_granicy, b.powierzchnia, fe.kod_organu, case when b.roboczy is false and b.zatwierdzony is false and b.zniesiony is false then 2
+    null uzyt_od, null uzyt_do, b.guid, b.opis opis, b.opis_granicy, b.powierzchnia, fe.kod_organu, case when b.roboczy is false and b.zatwierdzony is false and b.zniesiony is false then 2
 when b.roboczy is false and b.zatwierdzony is false and b.zniesiony is true  then 5
 when b.roboczy is false and b.zatwierdzony is false and b.zniesiony is null  then 2
 when b.roboczy is false and b.zatwierdzony is true and b.zniesiony is  false then 3
@@ -572,14 +576,14 @@ when b.roboczy is true and b.zatwierdzony is false and b.zniesiony is null then 
 when b.roboczy is true and b.zatwierdzony is true and b.zniesiony is null then 2 end as id_slo_fop_status, a.pp_id, a.opis_lokalizacji, 
 case when a.typ_tworu_id in (1, 2, 4) then 2 when a.typ_tworu_id = 3 then 1 end as typ_pomnika, 
 case when a.typ_tworu_id in (1, 2) then a.typ_tworu_id end as podtyp_pomnika,
-f.rodzaj_tworu_id as rodzaj_pomnika, b.geom
+f.rodzaj_tworu_id as rodzaj_pomnika, b.geom, b.nadzorca
     FROM _gdos_crfopdb_public.pomnik_przyrody a left join (select distinct pp_id, rodzaj_tworu_id from _gdos_crfopdb_public.twor_przyrody where rodzaj_tworu_id is not null) f on a.pp_id = f.pp_id    
     join _gdos_crfopdb_public.fop b on a.fop_id = b.fop_id
-    join pomnik_przyrody_ids_nowe e on a.pp_id = e.pp_id
+    join pomnik_przyrody_ids e on a.pp_id = e.pp_id
     left join _gdos_crfopdb_public.fop_edycja fe on fe.fop_id = b.fop_id
     union 
     SELECT a.fop_id, a.fa_id, b.roboczy, b.zatwierdzony, b.zniesiony, b.nazwa, b.data_utworzenia, d.rodzaj_operacji, e.objectid_from_sequence nowe_id, b.inspire_id, d.wersja_od, d.wersja_do,
-    d.uzyt_od, d.uzyt_do, b.guid, concat(b.opis, ', nadzorca: ', b.nadzorca) opis, b.opis_granicy, b.powierzchnia, d.kod_organu, case when b.roboczy is false and b.zatwierdzony is false and b.zniesiony is false then 2
+    d.uzyt_od, d.uzyt_do, b.guid, b.opis opis, b.opis_granicy, b.powierzchnia, d.kod_organu, case when b.roboczy is false and b.zatwierdzony is false and b.zniesiony is false then 2
 when b.roboczy is false and b.zatwierdzony is false and b.zniesiony is true  then 5
 when b.roboczy is false and b.zatwierdzony is false and b.zniesiony is null  then 2
 when b.roboczy is false and b.zatwierdzony is true and b.zniesiony is  false then 3
@@ -589,7 +593,7 @@ when b.roboczy is true and b.zatwierdzony is false and b.zniesiony is null then 
 when b.roboczy is true and b.zatwierdzony is true and b.zniesiony is null then 2 end as id_slo_fop_status, a.pp_id, a.opis_lokalizacji, 
 case when a.typ_tworu_id in (1, 2, 4) then 2 when a.typ_tworu_id = 3 then 1 end as typ_pomnika, 
 case when a.typ_tworu_id in (1, 2) then a.typ_tworu_id end as podtyp_pomnika,
-f.rodzaj_tworu_id as rodzaj_pomnika, b.geom
+f.rodzaj_tworu_id as rodzaj_pomnika, b.geom, b.nadzorca
     FROM _gdos_crfopdb_public._pomnik_przyrody a left join (select distinct pp_id, rodzaj_tworu_id from _gdos_crfopdb_public._twor_przyrody where rodzaj_tworu_id is not null) f on a.pp_id = f.pp_id    
     join _gdos_crfopdb_public._fop b on  a.fa_id = b.fa_id
    	join migracja.crfop_tmp_historia_wersji d on b.fa_id = d.fa_id
@@ -599,23 +603,26 @@ f.rodzaj_tworu_id as rodzaj_pomnika, b.geom
 	
 drop table if exists migracja.crfop_pomnik_przyrody_gestorzy;
 create table migracja.crfop_pomnik_przyrody_gestorzy as
+select pp_id, inspire_id, string_agg(nazwa, ', ') wojewodztwa, array_agg(id_gestora::varchar(255)) gestorzy
+from(
 with pp_przeciecia as (
 select st_area(st_intersection(pp.geom, gmi.geom)) inters_area , pp.nowe_id id_pp, gmi.nazwa, gmi.id id_gestora, pp.geom, 
 st_intersection(pp.geom, gmi.geom), pp.inspire_id
 from migracja.crfop_pomnik_przyrody_gotowy pp left join (select * from imap.sys_gestorzy where klasa = 'GMI') gmi
 on st_intersects(pp.geom, gmi.geom)
 where pp.geom is not null and st_isvalid(pp.geom) and pp.wersja_do = '9999-12-31 23:59:59.000')
-select distinct pp.nowe_id pp_id, pp_przeciecia.inters_area, pp_przeciecia.nazwa, pp_przeciecia.id_gestora, st_intersection
-from migracja.crfop_pomnik_przyrody_gotowy pp join (select * from pp_przeciecia) pp_przeciecia on pp.inspire_id = pp_przeciecia.inspire_id;
+select distinct pp.nowe_id pp_id, pp_przeciecia.inters_area, pp_przeciecia.nazwa, pp_przeciecia.id_gestora, st_intersection, pp.inspire_id
+from migracja.crfop_pomnik_przyrody_gotowy pp join (select * from pp_przeciecia) pp_przeciecia on pp.inspire_id = pp_przeciecia.inspire_id)
+group by pp_id, inspire_id;
 
 DELETE FROM imap.fop_pomnik_przyrody;
 INSERT INTO imap.fop_pomnik_przyrody (id, lokalnyid, wersja_od, wersja_do, wersjaid, uzyt_od, uzyt_do, nazwa, data_utworzenia,
 id_slo_fop_status, idguid, opis, opisprzebiegugranicy, powierzchnia, id_slo_fop_pomnik_rodzaj, id_slo_fop_pomnik_typ, id_slo_fop_pomnik_podtyp, 
-geometria_pkt, geometria_pow, zatw_wersja_od, zatw_wersja_do, gestor)
+geometria_pkt, geometria_pow, zatw_wersja_od, zatw_wersja_do, gestor, nadzorca)
 SELECT nowe_id, inspire_id, wersja_od, wersja_do, wersja_od, uzyt_od, uzyt_do, nazwa, data_utworzenia, id_slo_fop_status, guid, 
 opis, opis_granicy, powierzchnia, rodzaj_pomnika::int, typ_pomnika, podtyp_pomnika,
 case when st_geometrytype(geom) in ('ST_Point', 'ST_MultiPoint') then geom else null end as geom_pkt,
-case when st_geometrytype(geom) in ('ST_Polygon', 'ST_MultiPolygon') then geom else null end as geom_pow, wersja_od, wersja_do, kod_organu
+case when st_geometrytype(geom) in ('ST_Polygon', 'ST_MultiPolygon') then geom else null end as geom_pow, wersja_od, wersja_do, kod_organu, nadzorca
 FROM migracja.crfop_pomnik_przyrody_gotowy;
 
 drop table if exists migracja.crfop_twor_przyrody_gotowy;
@@ -624,14 +631,15 @@ drop table if exists migracja.crfop_twor_przyrody_gotowy;
     select distinct tp_id, nextval('fop__tech_id_seq') objectid_from_sequence from 
     (select distinct a.tp_id from _gdos_crfopdb_public.twor_przyrody a))
     SELECT f.fop_id, f.nowe_id id_fop_pomnik_przyrody, b.roboczy, b.zatwierdzony, b.zniesiony, b.nazwa, b.data_utworzenia, null rodzaj_operacji, e.objectid_from_sequence nowe_id, b.inspire_id, current_date wersja_od, '9999-12-31 23:59:59.000'::timestamptz  wersja_do,
-    null uzyt_od, null uzyt_do, b.guid, concat(b.opis, ', nadzorca: ', b.nadzorca) opis, b.opis_granicy, b.powierzchnia, fe.kod_organu, case when b.roboczy is false and b.zatwierdzony is false and b.zniesiony is false then 2
+    null uzyt_od, null uzyt_do, b.guid, b.opis opis, b.opis_granicy, b.powierzchnia, fe.kod_organu, case when b.roboczy is false and b.zatwierdzony is false and b.zniesiony is false then 2
 when b.roboczy is false and b.zatwierdzony is false and b.zniesiony is true  then 5
 when b.roboczy is false and b.zatwierdzony is false and b.zniesiony is null  then 2
 when b.roboczy is false and b.zatwierdzony is true and b.zniesiony is  false then 3
 when b.roboczy is false and b.zatwierdzony is true and b.zniesiony is  null  then 3
 when b.roboczy is true and b.zatwierdzony is false and b.zniesiony is false then 2
 when b.roboczy is true and b.zatwierdzony is false and b.zniesiony is null then 2
-when b.roboczy is true and b.zatwierdzony is true and b.zniesiony is null then 2 end as id_slo_fop_status, a.tp_id, a.liczba_tworow, a.gatunek_drzewa_id, a.obwod, a.piersnica, a.wysokosc_drzewa, a.geom
+when b.roboczy is true and b.zatwierdzony is true and b.zniesiony is null then 2 end as id_slo_fop_status, a.tp_id, a.liczba_tworow, 
+a.gatunek_drzewa_id, a.obwod, a.piersnica, a.wysokosc_drzewa, a.geom, b.nadzorca
     FROM _gdos_crfopdb_public.twor_przyrody a join 
     (select distinct pp_id, fop_id, nowe_id from migracja.crfop_pomnik_przyrody_gotowy where wersja_do = '9999-12-31 23:59:59.000') f on a.pp_id = f.pp_id 
     join twor_przyrody_ids e on a.tp_id = e.tp_id join _gdos_crfopdb_public.fop b on f.fop_id = b.fop_id
@@ -656,11 +664,11 @@ select fop_id from migracja.crfop_twor_przyrody_gotowy where zatwierdzony is tru
 DELETE FROM imap.fop_pomnik_przyrody_twor;
 INSERT INTO imap.fop_pomnik_przyrody_twor (id, lokalnyid, wersja_od, wersja_do, wersjaid, uzyt_od, uzyt_do, nazwa, data_utworzenia,
 id_slo_fop_status, idguid, opis, opisprzebiegugranicy, powierzchnia, id_fop_pomnik_przyrody, liczbatworow, id_slo_pomnik_drzewo_gatunek, 
-drzewoobwod, drzewopiersnica, drzewowysokosc, geometria_pkt, geometria_pow, zatw_wersja_od, zatw_wersja_do, gestor)
+drzewoobwod, drzewopiersnica, drzewowysokosc, geometria_pkt, geometria_pow, zatw_wersja_od, zatw_wersja_do, gestor, nadzorca)
 SELECT nowe_id, inspire_id, wersja_od, wersja_do, wersja_od, uzyt_od, uzyt_do, nazwa, data_utworzenia, id_slo_fop_status, guid, 
 opis, opis_granicy, powierzchnia, id_fop_pomnik_przyrody, liczba_tworow, gatunek_drzewa_id, obwod, piersnica, wysokosc_drzewa, 
 case when st_geometrytype(geom) in ('ST_Point', 'ST_MultiPoint') then geom else null end as geom_pkt,
-case when st_geometrytype(geom) in ('ST_Polygon', 'ST_MultiPolygon') then geom else null end as geom_pow, wersja_od, wersja_do, kod_organu
+case when st_geometrytype(geom) in ('ST_Polygon', 'ST_MultiPolygon') then geom else null end as geom_pow, wersja_od, wersja_do, kod_organu, nadzorca
 FROM migracja.crfop_twor_przyrody_gotowy;
 
 
@@ -668,32 +676,35 @@ drop table if exists migracja.crfop_stanowisko_dokumentacyjne_gotowy;
     create table migracja.crfop_stanowisko_dokumentacyjne_gotowy as 
     with stanowisko_dokumentacyjne_ids as (
     select distinct fop_id, nextval('fop__tech_id_seq') objectid_from_sequence from 
-    (select distinct fop_id from _gdos_crfopdb_public._stanowisko_dokumentacyjne 
+    (select distinct fop_id from _gdos_crfopdb_public._stanowisko_dokumentacyjne
     union
     select distinct fop_id from _gdos_crfopdb_public.stanowisko_dokumentacyjne))
+
     SELECT a.fop_id, null fa_id, b.geom, b.roboczy, b.zatwierdzony, b.zniesiony, b.nazwa, b.data_utworzenia, null rodzaj_operacji, e.objectid_from_sequence nowe_id, b.inspire_id, current_date wersja_od, '9999-12-31 23:59:59.000'  wersja_do,
-    null uzyt_od, null uzyt_do, b.guid, concat(b.opis, ', nadzorca: ', b.nadzorca) opis, b.opis_granicy, b.powierzchnia, fe.kod_organu, case when b.roboczy is false and b.zatwierdzony is false and b.zniesiony is false then 2
+    null uzyt_od, null uzyt_do, b.guid, b.opis opis, b.opis_granicy, b.powierzchnia, fe.kod_organu, case when b.roboczy is false and b.zatwierdzony is false and b.zniesiony is false then 2
 when b.roboczy is false and b.zatwierdzony is false and b.zniesiony is true  then 5
 when b.roboczy is false and b.zatwierdzony is false and b.zniesiony is null  then 2
 when b.roboczy is false and b.zatwierdzony is true and b.zniesiony is  false then 3
 when b.roboczy is false and b.zatwierdzony is true and b.zniesiony is  null  then 3
 when b.roboczy is true and b.zatwierdzony is false and b.zniesiony is false then 2
 when b.roboczy is true and b.zatwierdzony is false and b.zniesiony is null then 2
-when b.roboczy is true and b.zatwierdzony is true and b.zniesiony is null then 2 end as id_slo_fop_status, a.sd_id, a.cel_ochrony, a.charakter_geolog, a.kategoria_stan_id, a.rodzaj_stan_id
+when b.roboczy is true and b.zatwierdzony is true and b.zniesiony is null then 2 end as id_slo_fop_status, a.sd_id, a.cel_ochrony, a.charakter_geolog, a.kategoria_stan_id, a.rodzaj_stan_id,
+b.nadzorca
     FROM _gdos_crfopdb_public.stanowisko_dokumentacyjne a join _gdos_crfopdb_public.fop b on a.fop_id = b.fop_id
     join migracja.crfop_tmp_historia_wersji d on b.fop_id = d.fop_id
     join stanowisko_dokumentacyjne_ids e on a.fop_id = e.fop_id
     left join _gdos_crfopdb_public.fop_edycja fe on fe.fop_id = b.fop_id
     union 
     SELECT a.fop_id, a.fa_id, b.geom, b.roboczy, b.zatwierdzony, b.zniesiony, b.nazwa, b.data_utworzenia, d.rodzaj_operacji, e.objectid_from_sequence nowe_id, b.inspire_id, d.wersja_od, d.wersja_do,
-    d.uzyt_od, d.uzyt_do, b.guid, concat(b.opis, ', nadzorca: ', b.nadzorca) opis, b.opis_granicy, b.powierzchnia, d.kod_organu, case when b.roboczy is false and b.zatwierdzony is false and b.zniesiony is false then 2
+    d.uzyt_od, d.uzyt_do, b.guid, b.opis opis, b.opis_granicy, b.powierzchnia, d.kod_organu, case when b.roboczy is false and b.zatwierdzony is false and b.zniesiony is false then 2
 when b.roboczy is false and b.zatwierdzony is false and b.zniesiony is true  then 5
 when b.roboczy is false and b.zatwierdzony is false and b.zniesiony is null  then 2
 when b.roboczy is false and b.zatwierdzony is true and b.zniesiony is  false then 3
 when b.roboczy is false and b.zatwierdzony is true and b.zniesiony is  null  then 3
 when b.roboczy is true and b.zatwierdzony is false and b.zniesiony is false then 2
 when b.roboczy is true and b.zatwierdzony is false and b.zniesiony is null then 2
-when b.roboczy is true and b.zatwierdzony is true and b.zniesiony is null then 2 end as id_slo_fop_status, a.sd_id, a.cel_ochrony, a.charakter_geolog, a.kategoria_stan_id, a.rodzaj_stan_id
+when b.roboczy is true and b.zatwierdzony is true and b.zniesiony is null then 2 end as id_slo_fop_status, a.sd_id, a.cel_ochrony, a.charakter_geolog, a.kategoria_stan_id, a.rodzaj_stan_id,
+b.nadzorca
     FROM _gdos_crfopdb_public._stanowisko_dokumentacyjne a join _gdos_crfopdb_public._fop b on  a.fa_id = b.fa_id
     join migracja.crfop_tmp_historia_wersji d on b.fa_id = d.fa_id
     join stanowisko_dokumentacyjne_ids e on a.fop_id = e.fop_id; 
@@ -702,6 +713,8 @@ when b.roboczy is true and b.zatwierdzony is true and b.zniesiony is null then 2
 
 drop table if exists migracja.crfop_stanowisko_dokumentacyjne_gestorzy;
 create table migracja.crfop_stanowisko_dokumentacyjne_gestorzy as
+select nowe_id, inspire_id, string_agg(nazwa, ', ') wojewodztwa, array_agg(id::varchar(255)) gestorzy
+from(
 with przeciecia as (
 select st_area(st_intersection(sd.geom, woj.geom)) inters_area , sd.nowe_id, sd.inspire_id, woj.nazwa, woj.id 
 from migracja.crfop_stanowisko_dokumentacyjne_gotowy sd left join (select * from imap.sys_gestorzy where klasa = 'GMI') woj
@@ -716,15 +729,16 @@ union
 select sd.nowe_id, sd.inspire_id, woj.nazwa, woj.id 
 from migracja.crfop_stanowisko_dokumentacyjne_gotowy sd left join (select * from imap.sys_gestorzy where klasa = 'GMI') woj 
 on st_intersects(sd.geom, woj.geom)
-where sd.geom is not null and sd.wersja_do = '9999-12-31 23:59:59.000' and sd.inspire_id = 'PL.ZIPOP.1393.SD.17';
+where sd.geom is not null and sd.wersja_do = '9999-12-31 23:59:59.000' and sd.inspire_id = 'PL.ZIPOP.1393.SD.17')
+group by nowe_id, inspire_id;
 
 DELETE FROM imap.fop_stanowisko_dokumentacyjne;
 INSERT INTO imap.fop_stanowisko_dokumentacyjne (id, lokalnyid, wersja_od, wersja_do, wersjaid, uzyt_od, uzyt_do, nazwa, data_utworzenia,
 id_slo_fop_status, idguid, opis, opisprzebiegugranicy, powierzchnia, celeochrony, charakterystykageologiczna, id_slo_fop_stanowisko_kategoria, 
-id_slo_fop_stanowisko_rodzaj, geometria_pow, zatw_wersja_od, zatw_wersja_do, gestor)
+id_slo_fop_stanowisko_rodzaj, geometria_pow, zatw_wersja_od, zatw_wersja_do, gestor, nadzorca)
 SELECT nowe_id, inspire_id, wersja_od, wersja_do, wersja_od, uzyt_od, uzyt_do, nazwa, data_utworzenia, id_slo_fop_status, guid, 
 opis, opis_granicy, powierzchnia, cel_ochrony, charakter_geolog, kategoria_stan_id, rodzaj_stan_id,
-case when st_geometrytype(geom) in ('ST_Polygon', 'ST_MultiPolygon') then geom else null end as geom_pow, wersja_od, wersja_do, kod_organu
+case when st_geometrytype(geom) in ('ST_Polygon', 'ST_MultiPolygon') then geom else null end as geom_pow, wersja_od, wersja_do, kod_organu, nadzorca
 FROM migracja.crfop_stanowisko_dokumentacyjne_gotowy;
 
 
@@ -736,27 +750,27 @@ drop table if exists migracja.crfop_uzytek_ekologiczny_gotowy;
     union
     select distinct fop_id from _gdos_crfopdb_public.uzytek_ekologiczny))
     SELECT a.fop_id, null fa_id, b.geom, b.roboczy, b.zatwierdzony, b.zniesiony, b.nazwa, b.data_utworzenia, null rodzaj_operacji, e.objectid_from_sequence nowe_id, b.inspire_id, current_date wersja_od, '9999-12-31 23:59:59.000'  wersja_do,
-    null uzyt_od, null uzyt_do, b.guid, concat(b.opis, ', nadzorca: ', b.nadzorca) opis, b.opis_granicy, b.powierzchnia, fe.kod_organu, case when b.roboczy is false and b.zatwierdzony is false and b.zniesiony is false then 2
+    null uzyt_od, null uzyt_do, b.guid, b.opis opis, b.opis_granicy, b.powierzchnia, fe.kod_organu, case when b.roboczy is false and b.zatwierdzony is false and b.zniesiony is false then 2
 when b.roboczy is false and b.zatwierdzony is false and b.zniesiony is true  then 5
 when b.roboczy is false and b.zatwierdzony is false and b.zniesiony is null  then 2
 when b.roboczy is false and b.zatwierdzony is true and b.zniesiony is  false then 3
 when b.roboczy is false and b.zatwierdzony is true and b.zniesiony is  null  then 3
 when b.roboczy is true and b.zatwierdzony is false and b.zniesiony is false then 2
 when b.roboczy is true and b.zatwierdzony is false and b.zniesiony is null then 2
-when b.roboczy is true and b.zatwierdzony is true and b.zniesiony is null then 2 end as id_slo_fop_status, a.ue_id, a.cel_ochrony, a.wartosc_przyrodnicza, a.rodzaj_uzytku_id
+when b.roboczy is true and b.zatwierdzony is true and b.zniesiony is null then 2 end as id_slo_fop_status, a.ue_id, a.cel_ochrony, a.wartosc_przyrodnicza, a.rodzaj_uzytku_id, b.nadzorca
     FROM _gdos_crfopdb_public.uzytek_ekologiczny a join _gdos_crfopdb_public.fop b on a.fop_id = b.fop_id
     join uzytek_ekologiczny_ids e on a.fop_id = e.fop_id
     left join _gdos_crfopdb_public.fop_edycja fe on fe.fop_id = b.fop_id
     union 
     SELECT a.fop_id, a.fa_id, b.geom, b.roboczy, b.zatwierdzony, b.zniesiony, b.nazwa, b.data_utworzenia, d.rodzaj_operacji, e.objectid_from_sequence nowe_id, b.inspire_id, d.wersja_od, d.wersja_do,
-    d.uzyt_od, d.uzyt_do, b.guid, concat(b.opis, ', nadzorca: ', b.nadzorca) opis, b.opis_granicy, b.powierzchnia, d.kod_organu, case when b.roboczy is false and b.zatwierdzony is false and b.zniesiony is false then 2
+    d.uzyt_od, d.uzyt_do, b.guid, b.opis opis, b.opis_granicy, b.powierzchnia, d.kod_organu, case when b.roboczy is false and b.zatwierdzony is false and b.zniesiony is false then 2
 when b.roboczy is false and b.zatwierdzony is false and b.zniesiony is true  then 5
 when b.roboczy is false and b.zatwierdzony is false and b.zniesiony is null  then 2
 when b.roboczy is false and b.zatwierdzony is true and b.zniesiony is  false then 3
 when b.roboczy is false and b.zatwierdzony is true and b.zniesiony is  null  then 3
 when b.roboczy is true and b.zatwierdzony is false and b.zniesiony is false then 2
 when b.roboczy is true and b.zatwierdzony is false and b.zniesiony is null then 2
-when b.roboczy is true and b.zatwierdzony is true and b.zniesiony is null then 2 end as id_slo_fop_status, a.ue_id, a.cel_ochrony, a.wartosc_przyrodnicza, a.rodzaj_uzytku_id
+when b.roboczy is true and b.zatwierdzony is true and b.zniesiony is null then 2 end as id_slo_fop_status, a.ue_id, a.cel_ochrony, a.wartosc_przyrodnicza, a.rodzaj_uzytku_id, b.nadzorca
     FROM _gdos_crfopdb_public._uzytek_ekologiczny a join _gdos_crfopdb_public._fop b on  a.fa_id = b.fa_id
     join migracja.crfop_tmp_historia_wersji d on b.fa_id = d.fa_id
     join uzytek_ekologiczny_ids e on a.fop_id = e.fop_id; 
@@ -765,6 +779,8 @@ when b.roboczy is true and b.zatwierdzony is true and b.zniesiony is null then 2
 	
 drop table if exists migracja.crfop_uzytek_ekologiczny_gestorzy;
 create table migracja.crfop_uzytek_ekologiczny_gestorzy as
+select ue_id, inspire_id, string_agg(nazwa, ', ') wojewodztwa, array_agg(id_gestora::varchar(255)) gestorzy
+from(
 with ue_przeciecia as (
 select st_area(st_intersection(ue.geom, gmi.geom)) inters_area , ue.nowe_id id_ue, gmi.nazwa, gmi.id id_gestora, ue.geom, 
 st_intersection(ue.geom, gmi.geom), ue.inspire_id
@@ -772,16 +788,16 @@ from migracja.crfop_uzytek_ekologiczny_gotowy ue left join (select * from imap.s
 on st_intersects(ue.geom, gmi.geom)
 where ue.geom is not null and st_isvalid(ue.geom) and ue.wersja_do = '9999-12-31 23:59:59.000')
 select distinct ue.nowe_id ue_id, ue_przeciecia.inters_area, ue_przeciecia.nazwa, ue_przeciecia.id_gestora, st_intersection, ue.inspire_id
-from migracja.crfop_uzytek_ekologiczny_gotowy ue join (select * from ue_przeciecia where inters_area > 5) ue_przeciecia on ue.inspire_id = ue_przeciecia.inspire_id;
-
+from migracja.crfop_uzytek_ekologiczny_gotowy ue join (select * from ue_przeciecia where inters_area > 5) ue_przeciecia on ue.inspire_id = ue_przeciecia.inspire_id)
+group by ue_id, inspire_id;
 
 DELETE FROM imap.fop_uzytek_ekologiczny;
 INSERT INTO imap.fop_uzytek_ekologiczny (id, lokalnyid, wersja_od, wersja_do, wersjaid, uzyt_od, uzyt_do, nazwa, data_utworzenia,
 id_slo_fop_status, idguid, opis, opisprzebiegugranicy, powierzchnia, celeochrony, wartoscprzyrodnicza, 
-id_slo_fop_uzytek_rodzaj, geometria_pow, zatw_wersja_od, zatw_wersja_do, gestor)
+id_slo_fop_uzytek_rodzaj, geometria_pow, zatw_wersja_od, zatw_wersja_do, gestor, nadzorca)
 SELECT nowe_id, inspire_id, wersja_od, wersja_do, wersja_od, uzyt_od, uzyt_do, nazwa, data_utworzenia, id_slo_fop_status, guid, 
 opis, opis_granicy, powierzchnia, cel_ochrony, wartosc_przyrodnicza, rodzaj_uzytku_id,
-case when st_geometrytype(geom) in ('ST_Polygon', 'ST_MultiPolygon') then geom else null end as geom_pow, wersja_od, wersja_do, kod_organu
+case when st_geometrytype(geom) in ('ST_Polygon', 'ST_MultiPolygon') then geom else null end as geom_pow, wersja_od, wersja_do, kod_organu, nadzorca
 FROM migracja.crfop_uzytek_ekologiczny_gotowy;
 
 drop table if exists migracja.crfop_zespol_przyr_kraj_gotowy;
@@ -792,27 +808,27 @@ drop table if exists migracja.crfop_zespol_przyr_kraj_gotowy;
     union
     select distinct fop_id from _gdos_crfopdb_public.zespol_przyr_kraj))
     SELECT a.fop_id, null fa_id, b.geom, b.roboczy, b.zatwierdzony, b.zniesiony, b.nazwa, b.data_utworzenia, null rodzaj_operacji, e.objectid_from_sequence nowe_id, b.inspire_id, current_date wersja_od, '9999-12-31 23:59:59.000'::timestamptz  wersja_do,
-    null uzyt_od, null uzyt_do, b.guid, concat(b.opis, ', nadzorca: ', b.nadzorca) opis, b.opis_granicy, b.powierzchnia, fe.kod_organu, case when b.roboczy is false and b.zatwierdzony is false and b.zniesiony is false then 2
+    null uzyt_od, null uzyt_do, b.guid, b.opis opis, b.opis_granicy, b.powierzchnia, fe.kod_organu, case when b.roboczy is false and b.zatwierdzony is false and b.zniesiony is false then 2
 when b.roboczy is false and b.zatwierdzony is false and b.zniesiony is true  then 5
 when b.roboczy is false and b.zatwierdzony is false and b.zniesiony is null  then 2
 when b.roboczy is false and b.zatwierdzony is true and b.zniesiony is  false then 3
 when b.roboczy is false and b.zatwierdzony is true and b.zniesiony is  null  then 3
 when b.roboczy is true and b.zatwierdzony is false and b.zniesiony is false then 2
 when b.roboczy is true and b.zatwierdzony is false and b.zniesiony is null then 2
-when b.roboczy is true and b.zatwierdzony is true and b.zniesiony is null then 2 end as id_slo_fop_status, a.zpk_id, a.cel_ochrony, a.wartosc_przyrodnicza
+when b.roboczy is true and b.zatwierdzony is true and b.zniesiony is null then 2 end as id_slo_fop_status, a.zpk_id, a.cel_ochrony, a.wartosc_przyrodnicza, b.nadzorca
     FROM _gdos_crfopdb_public.zespol_przyr_kraj a join _gdos_crfopdb_public.fop b on a.fop_id = b.fop_id
     join zespol_przyr_kraj_ids e on a.fop_id = e.fop_id
     left join _gdos_crfopdb_public.fop_edycja fe on fe.fop_id = b.fop_id
     union 
     SELECT a.fop_id, a.fa_id, b.geom, b.roboczy, b.zatwierdzony, b.zniesiony, b.nazwa, b.data_utworzenia, d.rodzaj_operacji, e.objectid_from_sequence nowe_id, b.inspire_id, d.wersja_od  wersja_od, d.wersja_do  wersja_do,
-    d.uzyt_od uzyt_od, d.uzyt_do uzyt_do, b.guid, concat(b.opis, ', nadzorca: ', b.nadzorca) opis, b.opis_granicy, b.powierzchnia, d.kod_organu, case when b.roboczy is false and b.zatwierdzony is false and b.zniesiony is false then 2
+    d.uzyt_od uzyt_od, d.uzyt_do uzyt_do, b.guid, b.opis opis, b.opis_granicy, b.powierzchnia, d.kod_organu, case when b.roboczy is false and b.zatwierdzony is false and b.zniesiony is false then 2
 when b.roboczy is false and b.zatwierdzony is false and b.zniesiony is true  then 5
 when b.roboczy is false and b.zatwierdzony is false and b.zniesiony is null  then 2
 when b.roboczy is false and b.zatwierdzony is true and b.zniesiony is  false then 3
 when b.roboczy is false and b.zatwierdzony is true and b.zniesiony is  null  then 3
 when b.roboczy is true and b.zatwierdzony is false and b.zniesiony is false then 2
 when b.roboczy is true and b.zatwierdzony is false and b.zniesiony is null then 2
-when b.roboczy is true and b.zatwierdzony is true and b.zniesiony is null then 2 end as id_slo_fop_status, a.zpk_id, a.cel_ochrony, a.wartosc_przyrodnicza
+when b.roboczy is true and b.zatwierdzony is true and b.zniesiony is null then 2 end as id_slo_fop_status, a.zpk_id, a.cel_ochrony, a.wartosc_przyrodnicza, b.nadzorca
     FROM _gdos_crfopdb_public._zespol_przyr_kraj a join _gdos_crfopdb_public._fop b on  a.fa_id = b.fa_id
     join migracja.crfop_tmp_historia_wersji d on b.fa_id = d.fa_id
     join zespol_przyr_kraj_ids e on a.fop_id = e.fop_id; 
@@ -821,6 +837,8 @@ when b.roboczy is true and b.zatwierdzony is true and b.zniesiony is null then 2
 
 drop table if exists migracja.crfop_zespol_przyr_kraj_gestorzy;
 create table migracja.crfop_zespol_przyr_kraj_gestorzy as
+select zpk_id, inspire_id, string_agg(nazwa, ', ') wojewodztwa, array_agg(id_gestora::varchar(255)) gestorzy
+from(
 with zpk_przeciecia as (
 select st_area(st_intersection(zpk.geom, gmi.geom)) inters_area , zpk.nowe_id id_zpk, gmi.nazwa, gmi.id id_gestora, zpk.geom, 
 st_intersection(zpk.geom, gmi.geom), zpk.inspire_id
@@ -828,37 +846,38 @@ from migracja.crfop_zespol_przyr_kraj_gotowy zpk left join (select * from imap.s
 on st_intersects(zpk.geom, gmi.geom)
 where zpk.geom is not null and st_isvalid(zpk.geom) and zpk.wersja_do = '9999-12-31 23:59:59.000')
 select distinct zpk.nowe_id zpk_id, zpk_przeciecia.inters_area, zpk_przeciecia.nazwa, zpk_przeciecia.id_gestora, st_intersection, zpk.inspire_id
-from migracja.crfop_zespol_przyr_kraj_gotowy zpk join (select * from zpk_przeciecia where inters_area > 10) zpk_przeciecia on zpk.inspire_id = zpk_przeciecia.inspire_id;
+from migracja.crfop_zespol_przyr_kraj_gotowy zpk join (select * from zpk_przeciecia where inters_area > 10) zpk_przeciecia on zpk.inspire_id = zpk_przeciecia.inspire_id)
+group by zpk_id, inspire_id;
 
 
 DELETE FROM imap.fop_zespol_przyrodniczo_krajobrazowy;
 INSERT INTO imap.fop_zespol_przyrodniczo_krajobrazowy (id, lokalnyid, wersja_od, wersja_do, wersjaid, uzyt_od, uzyt_do, nazwa, data_utworzenia,
 id_slo_fop_status, idguid, opis, opisprzebiegugranicy, powierzchnia, celeochrony, wartoscprzyrodnicza, geometria_pkt,
-geometria_pow, zatw_wersja_od, zatw_wersja_do, gestor)
+geometria_pow, zatw_wersja_od, zatw_wersja_do, gestor, nadzorca)
 SELECT nowe_id, inspire_id, wersja_od, wersja_do, wersja_od, uzyt_od, uzyt_do, nazwa, data_utworzenia, id_slo_fop_status, guid, 
 opis, opis_granicy, powierzchnia, cel_ochrony, wartosc_przyrodnicza,
 case when st_geometrytype(geom) in ('ST_Point', 'ST_MultiPoint') then geom else null end as geom_pkt,
-case when st_geometrytype(geom) in ('ST_Polygon', 'ST_MultiPolygon') then geom else null end as geom_pow, wersja_od, wersja_do, kod_organu
+case when st_geometrytype(geom) in ('ST_Polygon', 'ST_MultiPolygon') then geom else null end as geom_pow, wersja_od, wersja_do, kod_organu, nadzorca
 FROM migracja.crfop_zespol_przyr_kraj_gotowy;
 	
 drop table if exists migracja.crfop_konwencja_gotowy;
 create table migracja.crfop_konwencja_gotowy as 
 with konwencja_ids as (
-select distinct fop_id, nextval('fop__tech_id_seq') objectid_from_sequence from 
-(select distinct fop_id from _gdos_crfopdb_public._konwencja)),
-konwencja_ids_nowe as (
-select distinct ko_id, nextval('fop__tech_id_seq') objectid_from_sequence from 
-(select distinct ko_id from _gdos_crfopdb_public.konwencja))
+    select distinct fop_id, ko_id, nextval('fop__tech_id_seq') objectid_from_sequence from 
+    (select distinct fop_id, ko_id from _gdos_crfopdb_public._konwencja
+    union
+    select distinct fop_id, ko_id from _gdos_crfopdb_public.konwencja))
+
 SELECT a.fop_id, null fa_id, b.roboczy, b.zatwierdzony, b.zniesiony, b.nazwa, b.data_utworzenia, null rodzaj_operacji, e.objectid_from_sequence nowe_id, b.inspire_id, current_date wersja_od, '9999-12-31 23:59:59.000'::timestamptz  wersja_do,
-null uzyt_od, null uzyt_do, null, a.rodzaj_konw_id, 
+null uzyt_od, null uzyt_do, null, a.rodzaj_konw_id, b.nadzorca,
 case when a.caly_obszar is true then 'T' when a.caly_obszar is false then 'N' end as caly_obszar, 
 case when st_geometrytype(b.geom) in ('ST_Point', 'ST_MultiPoint', 'ST_LineString', 'ST_MultiLineString') then st_buffer(b.geom, 1) when st_geometrytype(b.geom) in ('ST_Polygon', 'ST_MultiPolygon') then b.geom else null end as geom_pow
 FROM _gdos_crfopdb_public.konwencja a join _gdos_crfopdb_public.fop b on a.fop_id = b.fop_id
 join migracja.crfop_tmp_historia_wersji d on b.fop_id = d.fop_id
-join konwencja_ids_nowe e on a.ko_id = e.ko_id
+join konwencja_ids e on a.ko_id = e.ko_id
 union 
 SELECT a.fop_id, a.fa_id, b.roboczy, b.zatwierdzony, b.zniesiony, b.nazwa, b.data_utworzenia, d.rodzaj_operacji, e.objectid_from_sequence nowe_id, b.inspire_id, d.wersja_od, d.wersja_do,
-d.uzyt_od, d.uzyt_do, null, a.rodzaj_konw_id, 
+d.uzyt_od, d.uzyt_do, null, a.rodzaj_konw_id, b.nadzorca,
 case when a.caly_obszar is true then 'T' when a.caly_obszar is false then 'N' end as caly_obszar,
 case when st_geometrytype(b.geom) in ('ST_Point', 'ST_MultiPoint', 'ST_LineString', 'ST_MultiLineString') then st_buffer(b.geom, 1) when st_geometrytype(b.geom) in ('ST_Polygon', 'ST_MultiPolygon') then b.geom else null end as geom_pow
 FROM _gdos_crfopdb_public._konwencja a join _gdos_crfopdb_public._fop b on  a.fa_id = b.fa_id
